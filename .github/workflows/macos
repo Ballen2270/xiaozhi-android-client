@@ -1,0 +1,90 @@
+name: Build macOS and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # 仅在推送 v* 标签时触发
+  workflow_dispatch: # 允许手动触发
+
+permissions:
+  contents: write # 需要写入权限来创建 Release 和上传附件
+
+jobs:
+  build-macos:
+    name: Build macOS App
+    runs-on: macos-latest # 指定使用 macOS 运行环境
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2' # 使用你指定的 Flutter 版本
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # 注意：这里移除了 Android 特定的修复步骤
+
+      - name: Build macOS Application (Release Mode)
+        run: flutter build macos --release # 构建 macOS release 版本
+
+      # Flutter macOS 构建的产物通常在 build/macos/Build/Products/Release/YourAppName.app
+      # 需要确认你的 pubspec.yaml 中的 name: 是什么，假设是 xiaozhi_flutter
+      - name: Package macOS App as Zip
+        run: |
+          cd build/macos/Build/Products/Release/
+          # 确保这里的 'xiaozhi_flutter.app' 与你的项目名称匹配
+          # 你可以通过查看 build/macos/Build/Products/Release/ 目录确认实际的 .app 文件名
+          zip -r ../../../../xiaozhi-macos-release.zip xiaozhi_flutter.app
+        # 如果上一步的 app 名称不确定，可以尝试动态查找：
+        # run: |
+        #   cd build/macos/Build/Products/Release/
+        #   APP_NAME=$(find . -name "*.app" -maxdepth 1 -print -quit)
+        #   if [ -z "$APP_NAME" ]; then
+        #     echo "Error: Could not find .app file"
+        #     exit 1
+        #   fi
+        #   echo "Found app: $APP_NAME"
+        #   zip -r ../../../../xiaozhi-macos-release.zip "$APP_NAME"
+
+
+      - name: Upload macOS App Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-build # 定义 artifact 名称
+          path: xiaozhi-macos-release.zip # 上传打包好的 zip 文件
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-macos] # 依赖 macOS 构建任务成功完成
+    runs-on: ubuntu-latest # 创建 Release 可以使用 ubuntu
+    steps:
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release-build # 下载之前上传的 artifact
+          path: release-assets # 下载到指定目录
+
+      - name: Get tag name
+        id: tag_name
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        # 注意: action-gh-release@v1 可能已被弃用，建议更新到 @v2 或更高版本
+        # 如果遇到问题，可以尝试 uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 使用仓库自动提供的 Token
+        with:
+          # token: ${{ github.token }} # 也可以显式传递
+          tag_name: ${{ env.TAG_NAME }}
+          name: Release ${{ env.TAG_NAME }}
+          draft: false
+          prerelease: false
+          files: |
+            release-assets/xiaozhi-macos-release.zip # 指定要上传到 Release 的文件
