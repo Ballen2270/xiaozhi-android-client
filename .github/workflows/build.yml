@@ -43,7 +43,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [build-android, build-ios, build-macos]
+    needs: [build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download Android Artifact
