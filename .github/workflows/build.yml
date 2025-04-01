@@ -150,16 +150,33 @@ jobs:
       - name: Build macOS (ARM64)
         run: flutter build macos --release --dart-define=FLUTTER_BUILD_MODE=release --dart-define=FLUTTER_BUILD_OS=macos --dart-define=FLUTTER_BUILD_ARCH=arm64
 
-      - name: Package macOS App
+      - name: Find and Package macOS App
         run: |
-          cd build/macos/Build/Products/Release
-          zip -r lhht-ai-assistant-macos.zip lhht-ai-assistant.app
+          # 查找构建产物路径
+          APP_PATH=$(find build/macos -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: No .app file found in build directory"
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
+          
+          # 获取应用名称
+          APP_NAME=$(basename "$APP_PATH" .app)
+          echo "App name: $APP_NAME"
+          
+          # 创建zip包
+          cd $(dirname "$APP_PATH")
+          zip -r "${APP_NAME}-macos.zip" "${APP_NAME}.app"
+          echo "Created zip at: $(pwd)/${APP_NAME}-macos.zip"
+          
+          # 设置输出路径供后续步骤使用
+          echo "ZIP_PATH=$(pwd)/${APP_NAME}-macos.zip" >> $GITHUB_ENV
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-release
-          path: build/macos/Build/Products/Release/lhht-ai-assistant-macos.zip
+          path: ${{ env.ZIP_PATH }}
 
   create-release:
     name: Create GitHub Release
