@@ -125,9 +125,40 @@ jobs:
           name: ios-release
           path: build/ios/iphoneos/lhht-ai-assistant.ipa
 
+  build-macos:
+    name: Build macOS (ARM64)
+    runs-on: macos-14-arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Package macOS App
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r lhht-ai-assistant-macos.zip lhht-ai-assistant.app
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: build/macos/Build/Products/Release/lhht-ai-assistant-macos.zip
+
   create-release:
     name: Create GitHub Release
-    needs: [build-android, build-ios]
+    needs: [build-android, build-ios, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download Android Artifact
@@ -157,4 +188,5 @@ jobs:
           prerelease: false
           files: |
             android-debug/lhht-app-debug.apk
-            ios-release/lhht-ai-assistant.ipa 
+            ios-release/lhht-ai-assistant.ipa
+            macos-release/lhht-ai-assistant-macos.zip
