@@ -10,9 +10,85 @@ permissions:
   contents: write
 
 jobs:
-  build-macos:
-    name: Build macOS (ARM64)
-    runs-on: macos-latest  # 回退到通用macOS runner，确保可用性
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+        
+      - name: Fix PCM Player Plugin Info (使用正确的包名)
+        run: |
+          echo "Checking PCM Player Plugin:"
+          PCM_GRADLE_FILE="/home/runner/.pub-cache/hosted/pub.dev/flutter_pcm_player-0.0.1/android/build.gradle"
+          PCM_MANIFEST_FILE="/home/runner/.pub-cache/hosted/pub.dev/flutter_pcm_player-0.0.1/android/src/main/AndroidManifest.xml"
+          
+          if [ -f "$PCM_GRADLE_FILE" ]; then
+            echo "Found build.gradle:"
+            cat "$PCM_GRADLE_FILE"
+            
+            # 检查是否已有namespace，没有则添加，使用正确的包名
+            if ! grep -q "namespace" "$PCM_GRADLE_FILE"; then
+              echo "Adding namespace to build.gradle"
+              sed -i '/android {/a \\    namespace "com.lhht.flutter_pcm_player"' "$PCM_GRADLE_FILE"
+              echo "Modified build.gradle:"
+              cat "$PCM_GRADLE_FILE"
+            else
+              echo "Namespace already exists in build.gradle, updating it"
+              # 替换为正确的包名
+              sed -i 's/namespace "com.example.flutter_pcm_player"/namespace "com.lhht.flutter_pcm_player"/' "$PCM_GRADLE_FILE"
+              echo "Modified build.gradle:"
+              cat "$PCM_GRADLE_FILE"
+            fi
+          else
+            echo "Cannot find build.gradle at $PCM_GRADLE_FILE"
+          fi
+          
+          if [ -f "$PCM_MANIFEST_FILE" ]; then
+            echo "Found AndroidManifest.xml:"
+            cat "$PCM_MANIFEST_FILE"
+            # 修改AndroidManifest.xml中的包名
+            sed -i 's/package="com.example.flutter_pcm_player"/package="com.lhht.flutter_pcm_player"/' "$PCM_MANIFEST_FILE"
+            echo "Modified AndroidManifest.xml:"
+            cat "$PCM_MANIFEST_FILE"
+          else
+            echo "Cannot find AndroidManifest.xml"
+          fi
+          
+          # 备用方法：在gradle.properties中添加命名空间
+          GRADLE_PROPS="/home/runner/.pub-cache/hosted/pub.dev/flutter_pcm_player-0.0.1/android/gradle.properties"
+          echo 'android.namespace=com.lhht.flutter_pcm_player' >> "$GRADLE_PROPS"
+          echo "Added namespace to gradle.properties:"
+          cat "$GRADLE_PROPS"
+
+      # 使用debug模式构建APK，避免R8和Play Core库依赖问题
+      - name: Build APK (Debug Mode)
+        run: flutter build apk --debug
+
+      - name: Rename APK with prefix
+        run: |
+          cd build/app/outputs/flutter-apk/
+          mv app-debug.apk lhht-app-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug
+          path: build/app/outputs/flutter-apk/lhht-app-debug.apk
+          
+  build-ios:
+    name: Build iOS
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -27,8 +103,52 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build macOS
-        run: flutter build macos --release
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install || pod install --repo-update
+
+      # 使用最简单的方式构建iOS
+      - name: Build iOS
+        run: flutter build ios --release --no-codesign
+
+      - name: Create IPA
+        run: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r lhht-ai-assistant.ipa Payload/
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-release
+          path: build/ios/iphoneos/lhht-ai-assistant.ipa
+
+  build-macos:
+    name: Build macOS (ARM64)
+    runs-on: macos-14  # 使用最新macOS版本确保ARM64支持
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Update macOS Deployment Target
+        run: |
+          cd macos
+          sed -i '' 's/MACOSX_DEPLOYMENT_TARGET = 10.14/MACOSX_DEPLOYMENT_TARGET = 10.15/g' Runner.xcodeproj/project.pbxproj
+
+      - name: Build macOS (ARM64)
+        run: flutter build macos --release --dart-define=FLUTTER_BUILD_MODE=release --dart-define=FLUTTER_BUILD_OS=macos --dart-define=FLUTTER_BUILD_ARCH=arm64
 
       - name: Package macOS App
         run: |
@@ -43,7 +163,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [build-macos]
+    needs: [build-android, build-ios, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download Android Artifact
